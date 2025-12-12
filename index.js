@@ -90,6 +90,13 @@ async function run() {
         res.send({ creator: user?.role === 'creator' || false }); // safe check
     });
 
+    app.get('/users/:email', verifyToken, async (req, res) => {
+        const email = req.params.email;
+        if (email !== req.decoded.email) return res.status(403).send({ message: 'forbidden access' });
+        const user = await userCollection.findOne({ email });
+        res.send(user);
+    });
+
     app.post('/users', async (req, res) => {
         const user = req.body;
         const existingUser = await userCollection.findOne({ email: user.email });
@@ -209,7 +216,45 @@ async function run() {
 
     app.get('/payments/:email', verifyToken, async (req, res) => {
         if (req.params.email !== req.decoded.email) return res.status(403).send({ message: 'forbidden access' });
-        const result = await paymentCollection.find({ userEmail: req.params.email }).sort({ date: -1 }).toArray();
+
+        const result = await paymentCollection.aggregate([
+            { $match: { userEmail: req.params.email } },
+            {
+                $lookup: {
+                    from: 'contests',
+                    let: { contestObjId: { $toObjectId: '$contestId' } },
+                    pipeline: [
+                        { $match: { $expr: { $eq: ['$_id', '$$contestObjId'] } } }
+                    ],
+                    as: 'contest'
+                }
+            },
+            { $unwind: '$contest' },
+            {
+                $project: {
+                    _id: 1,
+                    userEmail: 1,
+                    transactionId: 1,
+                    date: 1,
+                    price: 1,
+                    contestId: 1,
+                    contestName: '$contest.name',
+                    deadline: '$contest.deadline',
+                    image: '$contest.image',
+                    prize: '$contest.prize',
+                    status: '$contest.status'
+                }
+            },
+            { $sort: { deadline: 1 } }
+        ]).toArray();
+
+        res.send(result);
+    });
+
+    app.get('/contests/won/:email', verifyToken, async (req, res) => {
+        const email = req.params.email;
+        if (email !== req.decoded.email) return res.status(403).send({ message: 'forbidden access' });
+        const result = await contestCollection.find({ "winner.email": email }).toArray();
         res.send(result);
     });
 
