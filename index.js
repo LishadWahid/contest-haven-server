@@ -182,7 +182,7 @@ async function run() {
 
     app.get('/contests/admin/all', verifyToken, verifyAdmin, async (req, res) => {
         const result = await contestCollection.find().toArray();
-        res.send(result);
+        res.send(result)
     });
 
     // payments
