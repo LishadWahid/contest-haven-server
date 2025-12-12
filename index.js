@@ -155,11 +155,7 @@ async function run() {
         res.send(result);
     });
 
-    app.delete('/contests/:id', verifyToken, async (req, res) => {
-        const id = req.params.id;
-        const result = await contestCollection.deleteOne({ _id: new ObjectId(id) });
-        res.send(result);
-    });
+
 
     app.patch('/contests/status/:id', verifyToken, verifyAdmin, async (req, res) => {
         const id = req.params.id;
