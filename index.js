@@ -40,31 +40,44 @@ async function run() {
     // auth
     app.post('/auth/jwt', (req, res) => {
         const { email, role } = req.body;
-        // Only include necessary info in JWT
-        const token = jwt.sign({ email, role }, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
+        // Only include necessary info in JWT, normalized to lowercase
+        const token = jwt.sign({ email: email.toLowerCase(), role }, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
         res.send({ token });
     });
 
     // middlewares
     const verifyToken = (req, res, next) => {
-        if (!req.headers.authorization) return res.status(401).send({ message: 'unauthorized access' });
+        if (!req.headers.authorization) {
+            console.log('No authorization header detected');
+            return res.status(401).send({ message: 'unauthorized access' });
+        }
         const token = req.headers.authorization.split(' ')[1];
         jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
-            if (err) return res.status(401).send({ message: 'unauthorized access' });
+            if (err) {
+                console.log('Token verification error:', err.message);
+                return res.status(401).send({ message: 'unauthorized access' });
+            }
             req.decoded = decoded; // store decoded token
+            console.log('Verified User:', decoded.email);
             next();
         });
     };
 
     const verifyAdmin = async (req, res, next) => {
-        const email = req.decoded.email;
+        const email = req.decoded.email.toLowerCase(); // Normalize email
+        console.log('Verifying Admin Access for:', email);
         const user = await userCollection.findOne({ email });
-        if (!user || user.role !== 'admin') return res.status(403).send({ message: 'forbidden access' });
+        console.log('User Role in DB:', user?.role);
+
+        if (!user || user.role !== 'admin') {
+            console.log('Admin Access DENIED for:', email);
+            return res.status(403).send({ message: 'forbidden access' });
+        }
         next();
     };
 
     const verifyCreator = async (req, res, next) => {
-        const email = req.decoded.email;
+        const email = req.decoded.email.toLowerCase(); // Normalize email
         const user = await userCollection.findOne({ email });
         if (!user || user.role !== 'creator') return res.status(403).send({ message: 'forbidden access' });
         next();
@@ -77,28 +90,29 @@ async function run() {
     });
 
     app.get('/users/admin/:email', verifyToken, async (req, res) => {
-        const email = req.params.email;
-        if (email !== req.decoded.email) return res.status(403).send({ message: 'forbidden access' });
+        const email = req.params.email.toLowerCase();
+        if (email !== req.decoded.email.toLowerCase()) return res.status(403).send({ message: 'forbidden access' });
         const user = await userCollection.findOne({ email });
         res.send({ admin: user?.role === 'admin' || false }); // safe check
     });
 
     app.get('/users/creator/:email', verifyToken, async (req, res) => {
-        const email = req.params.email;
-        if (email !== req.decoded.email) return res.status(403).send({ message: 'forbidden access' });
+        const email = req.params.email.toLowerCase();
+        if (email !== req.decoded.email.toLowerCase()) return res.status(403).send({ message: 'forbidden access' });
         const user = await userCollection.findOne({ email });
         res.send({ creator: user?.role === 'creator' || false }); // safe check
     });
 
     app.get('/users/:email', verifyToken, async (req, res) => {
-        const email = req.params.email;
-        if (email !== req.decoded.email) return res.status(403).send({ message: 'forbidden access' });
+        const email = req.params.email.toLowerCase();
+        if (email !== req.decoded.email.toLowerCase()) return res.status(403).send({ message: 'forbidden access' });
         const user = await userCollection.findOne({ email });
         res.send(user);
     });
 
     app.post('/users', async (req, res) => {
         const user = req.body;
+        user.email = user.email.toLowerCase(); // Ensure lowercase
         const existingUser = await userCollection.findOne({ email: user.email });
         if (existingUser) return res.send({ message: 'user already exists', insertedId: null });
         const result = await userCollection.insertOne(user);
@@ -254,6 +268,11 @@ async function run() {
             { $inc: { participantsCount: 1 } } // safe atomic increment
         );
         res.send({ paymentResult, updateResult });
+    });
+
+    app.get('/payments/all', verifyToken, verifyAdmin, async (req, res) => {
+        const result = await paymentCollection.find().toArray();
+        res.send(result);
     });
 
     app.get('/payments/:email', verifyToken, async (req, res) => {
