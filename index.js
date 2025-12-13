@@ -164,8 +164,28 @@ async function run() {
 
     app.delete('/contests/:id', verifyToken, async (req, res) => {
         const id = req.params.id;
-        const result = await contestCollection.deleteOne({ _id: new ObjectId(id) });
-        res.send(result);
+        const email = req.decoded.email;
+        const user = await userCollection.findOne({ email });
+
+        // Admin can delete any contest
+        if (user.role === 'admin') {
+            const result = await contestCollection.deleteOne({ _id: new ObjectId(id) });
+            return res.send(result);
+        }
+
+        // Creator can only delete their own pending contests
+        if (user.role === 'creator') {
+            const contest = await contestCollection.findOne({ _id: new ObjectId(id) });
+            if (!contest) return res.status(404).send({ message: 'Contest not found' });
+            if (contest.creator.email !== email) return res.status(403).send({ message: 'You can only delete your own contests' });
+            if (contest.status !== 'pending') return res.status(403).send({ message: 'You can only delete pending contests' });
+
+            const result = await contestCollection.deleteOne({ _id: new ObjectId(id) });
+            return res.send(result);
+        }
+
+        // Users cannot delete contests
+        return res.status(403).send({ message: 'You do not have permission to delete contests' });
     });
 
     app.patch('/contests/status/:id', verifyToken, verifyAdmin, async (req, res) => {
@@ -177,14 +197,36 @@ async function run() {
         res.send(result);
     });
 
-    app.patch('/contests/:id', verifyToken, verifyCreator, async (req, res) => {
+    app.patch('/contests/:id', verifyToken, async (req, res) => {
         const id = req.params.id;
+        const email = req.decoded.email;
+        const user = await userCollection.findOne({ email });
         const body = req.body;
-        const result = await contestCollection.updateOne(
-            { _id: new ObjectId(id) },
-            { $set: body }
-        );
-        res.send(result);
+
+        // Admin can edit any contest
+        if (user.role === 'admin') {
+            const result = await contestCollection.updateOne(
+                { _id: new ObjectId(id) },
+                { $set: body }
+            );
+            return res.send(result);
+        }
+
+        // Creator can only edit their own contests
+        if (user.role === 'creator') {
+            const contest = await contestCollection.findOne({ _id: new ObjectId(id) });
+            if (!contest) return res.status(404).send({ message: 'Contest not found' });
+            if (contest.creator.email !== email) return res.status(403).send({ message: 'You can only edit your own contests' });
+
+            const result = await contestCollection.updateOne(
+                { _id: new ObjectId(id) },
+                { $set: body }
+            );
+            return res.send(result);
+        }
+
+        // Users cannot edit contests
+        return res.status(403).send({ message: 'You do not have permission to edit contests' });
     });
 
     app.get('/contests/admin/all', verifyToken, verifyAdmin, async (req, res) => {
@@ -265,10 +307,55 @@ async function run() {
         res.send(result);
     });
 
-    app.get('/submissions/:contestId', verifyToken, verifyCreator, async (req, res) => {
+    app.get('/submissions/:contestId', verifyToken, async (req, res) => {
         const contestId = req.params.contestId;
-        const result = await submissionCollection.find({ contestId }).toArray();
-        res.send(result);
+        const email = req.decoded.email;
+        const user = await userCollection.findOne({ email });
+
+        // Admin can view all submissions
+        if (user.role === 'admin') {
+            const result = await submissionCollection.find({ contestId }).toArray();
+            return res.send(result);
+        }
+
+        // Creator can only view submissions for their own contests
+        if (user.role === 'creator') {
+            const contest = await contestCollection.findOne({ _id: new ObjectId(contestId) });
+            if (!contest) return res.status(404).send({ message: 'Contest not found' });
+            if (contest.creator.email !== email) return res.status(403).send({ message: 'You can only view submissions for your own contests' });
+
+            const result = await submissionCollection.find({ contestId }).toArray();
+            return res.send(result);
+        }
+
+        // Users cannot view submissions
+        return res.status(403).send({ message: 'You do not have permission to view submissions' });
+    });
+
+    // Winner declaration
+    app.patch('/contests/winner/:id', verifyToken, async (req, res) => {
+        const id = req.params.id;
+        const email = req.decoded.email;
+        const user = await userCollection.findOne({ email });
+        const { winner } = req.body;
+
+
+
+        // Creator can only declare winner for their own contests
+        if (user.role === 'creator') {
+            const contest = await contestCollection.findOne({ _id: new ObjectId(id) });
+            if (!contest) return res.status(404).send({ message: 'Contest not found' });
+            if (contest.creator.email !== email) return res.status(403).send({ message: 'You can only declare winners for your own contests' });
+
+            const result = await contestCollection.updateOne(
+                { _id: new ObjectId(id) },
+                { $set: { winner } }
+            );
+            return res.send(result);
+        }
+
+        // Users cannot declare winners
+        return res.status(403).send({ message: 'You do not have permission to declare winners' });
     });
 
     // mongo ping
