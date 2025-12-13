@@ -339,7 +339,14 @@ async function run() {
         const user = await userCollection.findOne({ email });
         const { winner } = req.body;
 
-
+        // Admin can declare winner for any contest
+        if (user.role === 'admin') {
+            const result = await contestCollection.updateOne(
+                { _id: new ObjectId(id) },
+                { $set: { winner } }
+            );
+            return res.send(result);
+        }
 
         // Creator can only declare winner for their own contests
         if (user.role === 'creator') {
