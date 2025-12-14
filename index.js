@@ -135,7 +135,7 @@ async function run() {
             { _id: new ObjectId(id) },
             { $set: { name, photo, address } }
         );
-       
+       res.send(result)
     });
 
     // contests
