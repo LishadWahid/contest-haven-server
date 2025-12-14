@@ -16,7 +16,7 @@ app.use(cors({
     optionsSuccessStatus: 200
 }));
 app.use(express.json({ limit: '50mb' })); // handle large base64 images
-app.use(express.urlencoded({ limit: '50mb', extended: true })); // ✅ handle large form data
+app.use(express.urlencoded({ limit: '50mb', extended: true })); 
 app.use(cookieParser());
 
 const uri = process.env.DB_URI;
@@ -53,8 +53,8 @@ async function run() {
         }
         const token = req.headers.authorization.split(' ')[1];
         jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
-            if (error) {
-                console.log('Token verification error:', error.message);
+            if (err) {
+                console.log('Token verification error:', err.message);
                 return res.status(401).send({ message: 'unauthorized access' });
             }
             req.decoded = decoded; // store decoded token
@@ -67,7 +67,7 @@ async function run() {
         const email = req.decoded.email.toLowerCase(); // Normalize email
         console.log('Verifying Admin Access for:', email);
         const user = await userCollection.findOne({ email });
-        console.log('User Role in DB:', user?.role);
+        console.log('User Role in Database:', user?.role);
 
         if (!user || user.role !== 'admin') {
             console.log('Admin Access DENIED for:', email);
