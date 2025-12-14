@@ -16,7 +16,7 @@ app.use(cors({
     optionsSuccessStatus: 200
 }));
 app.use(express.json({ limit: '50mb' })); // handle large base64 images
-app.use(express.urlencoded({ limit: '50mb', extended: true })); 
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cookieParser());
 
 const uri = process.env.DB_URI;
@@ -84,6 +84,31 @@ async function run() {
     };
 
     // users
+    app.get('/users/leaderboard', async (req, res) => {
+        const result = await contestCollection.aggregate([
+            {
+                $match: {
+                    winner: { $exists: true, $ne: null }
+                }
+            },
+            {
+                $group: {
+                    _id: "$winner.email",
+                    name: { $first: "$winner.name" },
+                    photo: { $first: "$winner.photo" },
+                    wins: { $sum: 1 }
+                }
+            },
+            {
+                $sort: { wins: -1 }
+            },
+            {
+                $limit: 10
+            }
+        ]).toArray();
+        res.send(result);
+    });
+
     app.get('/users', verifyToken, verifyAdmin, async (req, res) => {
         const result = await userCollection.find().toArray()
         res.send(result)
@@ -135,7 +160,7 @@ async function run() {
             { _id: new ObjectId(id) },
             { $set: { name, photo, address } }
         );
-       res.send(result)
+        res.send(result)
     });
 
     // contests
@@ -147,7 +172,7 @@ async function run() {
         if (search) query.$or = [
             { type: { $regex: search, $options: 'i' } },
             { name: { $regex: search, $options: 'i' } }
-        ]
+        ];
         const result = await contestCollection.find(query).toArray();
         res.send(result);
     });
