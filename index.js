@@ -145,8 +145,9 @@ async function run() {
         let query = { status: 'approved' };
         if (type) query.type = type;
         if (search) query.$or = [
-           
-        ];
+            { type: { $regex: search, $options: 'i' } },
+            { name: { $regex: search, $options: 'i' } }
+        ]
         const result = await contestCollection.find(query).toArray();
         res.send(result);
     });
