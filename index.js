@@ -35,7 +35,7 @@ async function run() {
     const userCollection = database.collection("users");
     const contestCollection = database.collection("contests");
     const paymentCollection = database.collection("payments");
-    const submissionCollection = database.collection("submissions");
+    
 
     // auth
     app.post('/auth/jwt', (req, res) => {
