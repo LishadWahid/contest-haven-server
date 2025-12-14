@@ -35,7 +35,7 @@ async function run() {
     const userCollection = database.collection("users");
     const contestCollection = database.collection("contests");
     const paymentCollection = database.collection("payments");
-    
+    const submissionCollection = database.collection("submissions");
 
     // auth
     app.post('/auth/jwt', (req, res) => {
@@ -53,8 +53,8 @@ async function run() {
         }
         const token = req.headers.authorization.split(' ')[1];
         jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
-            if (err) {
-                console.log('Token verification error:', err.message);
+            if (error) {
+                console.log('Token verification error:', error.message);
                 return res.status(401).send({ message: 'unauthorized access' });
             }
             req.decoded = decoded; // store decoded token
