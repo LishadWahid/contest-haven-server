@@ -11,17 +11,11 @@ const port = process.env.PORT || 5000;
 
 // middleware
 app.use(cors({
-    origin: (origin, callback) => {
-        // Allow requests with no origin (like mobile apps or curl requests)
-        if (!origin) return callback(null, true);
-
-        // Allow localhost and vercel deployments
-        if (origin.includes('localhost') || origin.includes('.vercel.app') || origin.includes('.web.app')) {
-            return callback(null, true);
-        }
-
-        callback(new Error('Not allowed by CORS'));
-    },
+    origin: [
+        'http://localhost:5173',
+        'https://contest-haven-server.vercel.app',
+        'https://steady-pika-5dcec8.netlify.app'
+    ],
     credentials: true,
     optionsSuccessStatus: 200
 }));
