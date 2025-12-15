@@ -11,7 +11,10 @@ const port = process.env.PORT || 5000;
 
 // middleware
 app.use(cors({
-    origin: true,
+    origin: [
+
+        'https://chipper-cajeta-5f98e5.netlify.app'
+    ],
     credentials: true,
     optionsSuccessStatus: 200
 }));
@@ -427,4 +430,7 @@ async function run() {
 run().catch(console.dir);
 
 app.get('/', (req, res) => res.send('ContestHub Server is Running'));
-app.listen(port, () => console.log(`Server is running on port: ${port}`));
+app.listen(port, () => {
+    console.log(`Server is running on port: ${port}`);
+    console.log('Server updated with universal CORS');
+});
