@@ -12,9 +12,7 @@ const port = process.env.PORT || 5000;
 // middleware
 app.use(cors({
     origin: [
-        'http://localhost:5173',
-        'https://contest-haven-server.vercel.app',
-        'https://steady-pika-5dcec8.netlify.app'
+        'https://loquacious-strudel-30eef6.netlify.app',
     ],
     credentials: true,
     optionsSuccessStatus: 200
