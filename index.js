@@ -11,11 +11,18 @@ const port = process.env.PORT || 5000;
 
 // middleware
 app.use(cors({
-    origin: [
-        'http://localhost:5173',
-        'https://contest-haven-server.vercel.app',
-        'https://charming-chimera-aed089.netlify.app'
-    ],
+    origin: (origin, callback) => {
+        const allowedOrigins = [
+            'http://localhost:5173',
+            'https://contest-haven-server.vercel.app'
+        ];
+        if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.netlify.app')) {
+            callback(null, true);
+        } else {
+            console.log('Blocked by CORS:', origin);
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
     credentials: true,
     optionsSuccessStatus: 200
 }));
