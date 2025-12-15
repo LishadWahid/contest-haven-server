@@ -9,12 +9,22 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const app = express();
 const port = process.env.PORT || 5000;
 
-// middleware
-app.use(cors({
-    origin: [
+// Manual CORS headers to ensure they're always present
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', 'https://chipper-cajeta-5f98e5.netlify.app');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
 
-        'https://chipper-cajeta-5f98e5.netlify.app'
-    ],
+    // Handle preflight
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
+    next();
+});
+
+app.use(cors({
+    origin: 'https://chipper-cajeta-5f98e5.netlify.app',
     credentials: true,
     optionsSuccessStatus: 200
 }));
