@@ -11,18 +11,7 @@ const port = process.env.PORT || 5000;
 
 // middleware
 app.use(cors({
-    origin: (origin, callback) => {
-        const allowedOrigins = [
-            'http://localhost:5173',
-            'https://contest-haven-server.vercel.app'
-        ];
-        if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.netlify.app')) {
-            callback(null, true);
-        } else {
-            console.log('Blocked by CORS:', origin);
-            callback(new Error('Not allowed by CORS'));
-        }
-    },
+    origin: true,
     credentials: true,
     optionsSuccessStatus: 200
 }));
