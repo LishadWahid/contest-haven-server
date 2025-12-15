@@ -14,7 +14,7 @@ app.use(cors({
     origin: [
         'http://localhost:5173',
         'https://contest-haven-server.vercel.app',
-        'https://endearing-frangipane-7fdbb9.netlify.app'
+        'https://charming-chimera-aed089.netlify.app'
     ],
     credentials: true,
     optionsSuccessStatus: 200
