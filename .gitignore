@@ -1,2 +1,4 @@
 .env
 .vercel
+.env*.local
+contest-haven-firebase-adminsdk-fbsvc-3dc1036aa1.json

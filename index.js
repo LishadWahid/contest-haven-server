@@ -2,180 +2,212 @@ const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
-const cookieParser = require('cookie-parser');
 const jwt = require('jsonwebtoken');
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+
+// Initialize Stripe
+const stripe = process.env.STRIPE_SECRET_KEY
+    ? require('stripe')(process.env.STRIPE_SECRET_KEY)
+    : null;
+
+if (!stripe) {
+    console.warn('⚠️  Stripe not initialized - STRIPE_SECRET_KEY missing');
+}
 
 const app = express();
 const port = process.env.PORT || 5000;
 
-// Root route - defined FIRST to check server status without DB
-app.get('/', (req, res) => {
-    res.send({
-        status: 'Unprotected Server is Running',
-        db_status: database ? 'Connected' : 'Disconnected',
-        env_check: process.env.DB_URI ? 'DB_URI Found' : 'DB_URI Missing'
-    });
-});
-
+// Middleware
 app.use(cors({
-    origin: ["http://localhost:5173", "https://neon-starship-6daa08.netlify.app"],
+    origin: [
+        "https://dapper-bienenstitch-94c27f.netlify.app",
+        "http://localhost:5173",
+        "http://localhost:5000"
+    ],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 
-app.use(express.json({ limit: '50mb' })); // handle large base64 images
+app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
-app.use(cookieParser());
 
-const uri = process.env.DB_URI;
-// Create client only if URI exists to avoid immediate startup crash
+// Database
 let client;
-if (uri) {
-    client = new MongoClient(uri, {
-        serverApi: {
-            version: ServerApiVersion.v1,
-            strict: true,
-            deprecationErrors: true,
-        }
-    });
-} else {
-    console.error("CRITICAL ERROR: DB_URI is missing in environment variables!");
-}
-
-let database, userCollection, contestCollection, paymentCollection, submissionCollection;
+let database;
+let userCollection;
+let contestCollection;
+let paymentCollection;
+let submissionCollection;
 
 async function connectDB() {
-    // If database is already connected, return
     if (database) return;
+
     if (!client) {
-        console.error("Cannot connect: Client not initialized (DB_URI missing)");
-        return;
+        const uri = process.env.DB_URI || process.env.MONGODB_URI;
+
+        if (!uri) {
+            throw new Error('Database URI not found in environment variables');
+        }
+
+        try {
+            client = new MongoClient(uri, {
+                serverApi: {
+                    version: ServerApiVersion.v1,
+                    strict: true,
+                    deprecationErrors: true,
+                }
+            });
+            await client.connect();
+        } catch (e) {
+            console.error("Failed to connect to MongoDB:", e.message);
+            throw e;
+        }
     }
+
     try {
-        await client.connect();
-        database = client.db("contesthub");
-        userCollection = database.collection("users");
-        contestCollection = database.collection("contests");
-        paymentCollection = database.collection("payments");
-        submissionCollection = database.collection("submissions");
-        console.log("MongoDB connected!");
+        if (!database) {
+            database = client.db("contesthub");
+            userCollection = database.collection("users");
+            contestCollection = database.collection("contests");
+            paymentCollection = database.collection("payments");
+            submissionCollection = database.collection("submissions");
+            console.log("✅ MongoDB connected successfully");
+        }
     } catch (error) {
-        console.error("MongoDB connection error:", error);
+        console.error("MongoDB setup failed:", error);
+        throw error;
     }
 }
 
-// Ensure DB is connected for every request
-app.use(async (req, res, next) => {
-    // Skip DB connection for root route (already handled, but safety check)
-    if (req.path === '/') return next();
-
-    await connectDB();
-    next();
+// Health Check
+app.get('/', (req, res) => {
+    res.send({
+        status: 'ContestHub Server Running',
+        timestamp: new Date().toISOString(),
+        db_status: database ? 'Connected' : 'Disconnected'
+    });
 });
 
-// auth
+// DB connection middleware
+app.use(async (req, res, next) => {
+    if (req.path === '/') return next();
+
+    try {
+        await connectDB();
+        next();
+    } catch (error) {
+        console.error("Middleware DB Connection Error:", error);
+        res.status(500).send({ message: "Database connection failed", error: error.message });
+    }
+});
+
+// Auth API
 app.post('/auth/jwt', (req, res) => {
     const { email, role } = req.body;
-    // Only include necessary info in JWT, normalized to lowercase
+    if (!process.env.ACCESS_TOKEN_SECRET) {
+        return res.status(500).send({ message: 'Server Configuration Error: Missing JWT Secret' });
+    }
     const token = jwt.sign({ email: email.toLowerCase(), role }, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
     res.send({ token });
 });
 
-// middlewares
+// Middleware
 const verifyToken = (req, res, next) => {
     if (!req.headers.authorization) {
-        console.log('No authorization header detected');
         return res.status(401).send({ message: 'unauthorized access' });
     }
     const token = req.headers.authorization.split(' ')[1];
     jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
         if (err) {
-            console.log('Token verification error:', err.message);
             return res.status(401).send({ message: 'unauthorized access' });
         }
-        req.decoded = decoded; // store decoded token
-        console.log('Verified User:', decoded.email);
+        req.decoded = decoded;
         next();
     });
 };
 
 const verifyAdmin = async (req, res, next) => {
-    const email = req.decoded.email.toLowerCase(); // Normalize email
-    console.log('Verifying Admin Access for:', email);
+    const email = req.decoded.email.toLowerCase();
     const user = await userCollection.findOne({ email });
-    console.log('User Role in Database:', user?.role);
-
     if (!user || user.role !== 'admin') {
-        console.log('Admin Access DENIED for:', email);
         return res.status(403).send({ message: 'forbidden access' });
     }
     next();
 };
 
 const verifyCreator = async (req, res, next) => {
-    const email = req.decoded.email.toLowerCase(); // Normalize email
+    const email = req.decoded.email.toLowerCase();
     const user = await userCollection.findOne({ email });
-    if (!user || user.role !== 'creator') return res.status(403).send({ message: 'forbidden access' });
+    if (!user || user.role !== 'creator') {
+        return res.status(403).send({ message: 'forbidden access' });
+    }
     next();
 };
 
-// users
+const normalizeEmail = (email) => email ? email.toLowerCase() : '';
+
+// Helper to check user role and ownership
+const checkUserAccess = async (email, requiredRole = null) => {
+    const user = await userCollection.findOne({ email: normalizeEmail(email) });
+    if (!user) return { user: null, hasAccess: false };
+    if (requiredRole && user.role !== requiredRole) return { user, hasAccess: false };
+    return { user, hasAccess: true };
+};
+
+
+// API Routes
+
+// Users
 app.get('/users/leaderboard', async (req, res) => {
-    const result = await contestCollection.aggregate([
-        {
-            $match: {
-                winner: { $exists: true, $ne: null }
-            }
-        },
-        {
-            $group: {
-                _id: "$winner.email",
-                name: { $first: "$winner.name" },
-                photo: { $first: "$winner.photo" },
-                wins: { $sum: 1 }
-            }
-        },
-        {
-            $sort: { wins: -1 }
-        },
-        {
-            $limit: 10
-        }
-    ]).toArray();
-    res.send(result);
+    try {
+        const result = await contestCollection.aggregate([
+            { $match: { winner: { $exists: true, $ne: null } } },
+            {
+                $group: {
+                    _id: "$winner.email",
+                    name: { $first: "$winner.name" },
+                    photo: { $first: "$winner.photo" },
+                    wins: { $sum: 1 }
+                }
+            },
+            { $sort: { wins: -1 } },
+            { $limit: 10 }
+        ]).toArray();
+        res.send(result);
+    } catch (err) {
+        res.status(500).send({ message: err.message });
+    }
 });
 
 app.get('/users', verifyToken, verifyAdmin, async (req, res) => {
-    const result = await userCollection.find().toArray()
-    res.send(result)
-});
-
-app.get('/users/admin/:email', verifyToken, async (req, res) => {
-    const email = req.params.email.toLowerCase();
-    if (email !== req.decoded.email.toLowerCase()) return res.status(403).send({ message: 'forbidden access' });
-    const user = await userCollection.findOne({ email });
-    res.send({ admin: user?.role === 'admin' || false }); // safe check
-});
-
-app.get('/users/creator/:email', verifyToken, async (req, res) => {
-    const email = req.params.email.toLowerCase();
-    if (email !== req.decoded.email.toLowerCase()) return res.status(403).send({ message: 'forbidden access' });
-    const user = await userCollection.findOne({ email });
-    res.send({ creator: user?.role === 'creator' || false }); // safe check
+    const result = await userCollection.find().toArray();
+    res.send(result);
 });
 
 app.get('/users/:email', verifyToken, async (req, res) => {
-    const email = req.params.email.toLowerCase();
-    if (email !== req.decoded.email.toLowerCase()) return res.status(403).send({ message: 'forbidden access' });
+    const email = normalizeEmail(req.params.email);
+    if (email !== normalizeEmail(req.decoded.email)) return res.status(403).send({ message: 'forbidden access' });
     const user = await userCollection.findOne({ email });
     res.send(user);
 });
 
+app.get('/users/admin/:email', verifyToken, async (req, res) => {
+    const email = normalizeEmail(req.params.email);
+    if (email !== normalizeEmail(req.decoded.email)) return res.status(403).send({ message: 'forbidden access' });
+    const user = await userCollection.findOne({ email });
+    res.send({ admin: user?.role === 'admin' });
+});
+
+app.get('/users/creator/:email', verifyToken, async (req, res) => {
+    const email = normalizeEmail(req.params.email);
+    if (email !== normalizeEmail(req.decoded.email)) return res.status(403).send({ message: 'forbidden access' });
+    const user = await userCollection.findOne({ email });
+    res.send({ creator: user?.role === 'creator' });
+});
+
 app.post('/users', async (req, res) => {
     const user = req.body;
-    user.email = user.email.toLowerCase(); // Ensure lowercase
+    user.email = normalizeEmail(user.email);
     const existingUser = await userCollection.findOne({ email: user.email });
     if (existingUser) return res.send({ message: 'user already exists', insertedId: null });
     const result = await userCollection.insertOne(user);
@@ -183,25 +215,23 @@ app.post('/users', async (req, res) => {
 });
 
 app.patch('/users/role/:id', verifyToken, verifyAdmin, async (req, res) => {
-    const id = req.params.id;
     const result = await userCollection.updateOne(
-        { _id: new ObjectId(id) },
+        { _id: new ObjectId(req.params.id) },
         { $set: { role: req.body.role } }
     );
     res.send(result);
 });
 
 app.patch('/users/:id', verifyToken, async (req, res) => {
-    const id = req.params.id;
     const { name, photo, address } = req.body;
     const result = await userCollection.updateOne(
-        { _id: new ObjectId(id) },
+        { _id: new ObjectId(req.params.id) },
         { $set: { name, photo, address } }
     );
-    res.send(result)
+    res.send(result);
 });
 
-// contests
+// Contests
 app.get('/contests', async (req, res) => {
     const search = req.query.search || "";
     const type = req.query.type;
@@ -216,59 +246,53 @@ app.get('/contests', async (req, res) => {
 });
 
 app.get('/contests/popular', async (req, res) => {
-    const result = await contestCollection.find({ status: 'approved' }).sort({ participantsCount: -1 }).limit(8).toArray();
+    const result = await contestCollection.find({ status: 'approved' })
+        .sort({ participantsCount: -1 })
+        .limit(8)
+        .toArray();
     res.send(result);
 });
 
 app.get('/contests/:id', verifyToken, async (req, res) => {
-    const id = req.params.id;
-    const result = await contestCollection.findOne({ _id: new ObjectId(id) });
+    const result = await contestCollection.findOne({ _id: new ObjectId(req.params.id) });
     res.send(result);
 });
 
 app.post('/contests', verifyToken, verifyCreator, async (req, res) => {
-    const contest = req.body;
-    const result = await contestCollection.insertOne(contest);
+    const result = await contestCollection.insertOne(req.body);
     res.send(result);
 });
 
 app.get('/contests/my-contests/:email', verifyToken, verifyCreator, async (req, res) => {
-    const email = req.params.email;
-    if (req.decoded.email !== email) return res.status(403).send({ message: 'forbidden access' });
+    const email = normalizeEmail(req.params.email);
+    if (normalizeEmail(req.decoded.email) !== email) return res.status(403).send({ message: 'forbidden access' });
     const result = await contestCollection.find({ "creator.email": email }).toArray();
     res.send(result);
 });
 
 app.delete('/contests/:id', verifyToken, async (req, res) => {
     const id = req.params.id;
-    const email = req.decoded.email;
+    const email = normalizeEmail(req.decoded.email);
     const user = await userCollection.findOne({ email });
 
-    // Admin can delete any contest
     if (user.role === 'admin') {
         const result = await contestCollection.deleteOne({ _id: new ObjectId(id) });
         return res.send(result);
     }
-
-    // Creator can only delete their own pending contests
     if (user.role === 'creator') {
         const contest = await contestCollection.findOne({ _id: new ObjectId(id) });
         if (!contest) return res.status(404).send({ message: 'Contest not found' });
-        if (contest.creator.email !== email) return res.status(403).send({ message: 'You can only delete your own contests' });
-        if (contest.status !== 'pending') return res.status(403).send({ message: 'You can only delete pending contests' });
-
+        if (normalizeEmail(contest.creator.email) !== email) return res.status(403).send({ message: 'Forbidden' });
+        if (contest.status !== 'pending') return res.status(403).send({ message: 'Can only delete pending' });
         const result = await contestCollection.deleteOne({ _id: new ObjectId(id) });
         return res.send(result);
     }
-
-    // Users cannot delete contests
-    return res.status(403).send({ message: 'You do not have permission to delete contests' });
+    return res.status(403).send({ message: 'Forbidden' });
 });
 
 app.patch('/contests/status/:id', verifyToken, verifyAdmin, async (req, res) => {
-    const id = req.params.id;
     const result = await contestCollection.updateOne(
-        { _id: new ObjectId(id) },
+        { _id: new ObjectId(req.params.id) },
         { $set: { status: req.body.status } }
     );
     res.send(result);
@@ -276,58 +300,46 @@ app.patch('/contests/status/:id', verifyToken, verifyAdmin, async (req, res) => 
 
 app.patch('/contests/:id', verifyToken, async (req, res) => {
     const id = req.params.id;
-    const email = req.decoded.email;
+    const email = normalizeEmail(req.decoded.email);
     const user = await userCollection.findOne({ email });
     const body = req.body;
 
-    // Admin can edit any contest
     if (user.role === 'admin') {
-        const result = await contestCollection.updateOne(
-            { _id: new ObjectId(id) },
-            { $set: body }
-        );
+        const result = await contestCollection.updateOne({ _id: new ObjectId(id) }, { $set: body });
         return res.send(result);
     }
-
-    // Creator can only edit their own contests
     if (user.role === 'creator') {
         const contest = await contestCollection.findOne({ _id: new ObjectId(id) });
-        if (!contest) return res.status(404).send({ message: 'Contest not found' });
-        if (contest.creator.email !== email) return res.status(403).send({ message: 'You can only edit your own contests' });
-
-        const result = await contestCollection.updateOne(
-            { _id: new ObjectId(id) },
-            { $set: body }
-        );
+        if (!contest) return res.status(404).send({ message: 'Not found' });
+        if (normalizeEmail(contest.creator.email) !== email) return res.status(403).send({ message: 'Forbidden' });
+        const result = await contestCollection.updateOne({ _id: new ObjectId(id) }, { $set: body });
         return res.send(result);
     }
-
-    // Users cannot edit contests
-    return res.status(403).send({ message: 'You do not have permission to edit contests' });
+    return res.status(403).send({ message: 'Forbidden' });
 });
 
 app.get('/contests/admin/all', verifyToken, verifyAdmin, async (req, res) => {
     const result = await contestCollection.find().toArray();
-    res.send(result)
+    res.send(result);
 });
 
-// payments
+// Payments
 app.post('/payments/create-payment-intent', verifyToken, async (req, res) => {
+    if (!stripe) return res.status(503).send({ message: 'Payment service unavailable' });
     const { price } = req.body;
-    // Safe parse
     const amount = parseInt(price * 100) || 0;
+    if (amount < 1) return res.status(400).send({ message: "Invalid amount" });
 
-    // Check if amount is valid (Stripe requires > 50 cents usually)
-    if (amount < 1) {
-        return res.status(400).send({ message: "Invalid amount" });
+    try {
+        const paymentIntent = await stripe.paymentIntents.create({
+            amount,
+            currency: 'usd',
+            payment_method_types: ['card']
+        });
+        res.send({ clientSecret: paymentIntent.client_secret });
+    } catch (e) {
+        res.status(500).send({ message: e.message });
     }
-
-    const paymentIntent = await stripe.paymentIntents.create({
-        amount,
-        currency: 'usd',
-        payment_method_types: ['card']
-    });
-    res.send({ clientSecret: paymentIntent.client_secret });
 });
 
 app.post('/payments', verifyToken, async (req, res) => {
@@ -335,7 +347,7 @@ app.post('/payments', verifyToken, async (req, res) => {
     const paymentResult = await paymentCollection.insertOne(payment);
     const updateResult = await contestCollection.updateOne(
         { _id: new ObjectId(payment.contestId) },
-        { $inc: { participantsCount: 1 } } // safe atomic increment
+        { $inc: { participantsCount: 1 } }
     );
     res.send({ paymentResult, updateResult });
 });
@@ -346,129 +358,87 @@ app.get('/payments/all', verifyToken, verifyAdmin, async (req, res) => {
 });
 
 app.get('/payments/:email', verifyToken, async (req, res) => {
-    if (req.params.email !== req.decoded.email) return res.status(403).send({ message: 'forbidden access' });
-
+    if (normalizeEmail(req.params.email) !== normalizeEmail(req.decoded.email)) {
+        return res.status(403).send({ message: 'forbidden' });
+    }
     const result = await paymentCollection.aggregate([
         { $match: { userEmail: req.params.email } },
         {
             $lookup: {
                 from: 'contests',
                 let: { contestObjId: { $toObjectId: '$contestId' } },
-                pipeline: [
-                    { $match: { $expr: { $eq: ['$_id', '$$contestObjId'] } } }
-                ],
+                pipeline: [{ $match: { $expr: { $eq: ['$_id', '$$contestObjId'] } } }],
                 as: 'contest'
             }
         },
         { $unwind: '$contest' },
         {
             $project: {
-                _id: 1,
-                userEmail: 1,
-                transactionId: 1,
-                date: 1,
-                price: 1,
-                contestId: 1,
-                contestName: '$contest.name',
-                deadline: '$contest.deadline',
-                image: '$contest.image',
-                prize: '$contest.prize',
-                status: '$contest.status'
+                _id: 1, userEmail: 1, transactionId: 1, date: 1, price: 1, contestId: 1,
+                contestName: '$contest.name', deadline: '$contest.deadline',
+                image: '$contest.image', prize: '$contest.prize', status: '$contest.status'
             }
         },
         { $sort: { deadline: 1 } }
     ]).toArray();
-
     res.send(result);
 });
 
 app.get('/contests/won/:email', verifyToken, async (req, res) => {
-    const email = req.params.email;
-    if (email !== req.decoded.email) return res.status(403).send({ message: 'forbidden access' });
+    const email = normalizeEmail(req.params.email);
+    if (email !== normalizeEmail(req.decoded.email)) return res.status(403).send({ message: 'forbidden' });
     const result = await contestCollection.find({ "winner.email": email }).toArray();
     res.send(result);
 });
 
-// submissions
-app.get('/debug/submissions', async (req, res) => {
-    const result = await submissionCollection.find().toArray();
-    res.send(result);
-});
-
+// Submissions
 app.post('/submissions', verifyToken, async (req, res) => {
-    const submission = req.body;
-    const result = await submissionCollection.insertOne(submission);
+    const result = await submissionCollection.insertOne(req.body);
     res.send(result);
 });
 
 app.get('/submissions/:contestId', verifyToken, async (req, res) => {
     const contestId = req.params.contestId;
-    const email = req.decoded.email;
+    const email = normalizeEmail(req.decoded.email);
     const user = await userCollection.findOne({ email });
 
-    // Admin can view all submissions
     if (user.role === 'admin') {
         const result = await submissionCollection.find({ contestId }).toArray();
         return res.send(result);
     }
-
-    // Creator can only view submissions for their own contests
     if (user.role === 'creator') {
         const contest = await contestCollection.findOne({ _id: new ObjectId(contestId) });
-        if (!contest) return res.status(404).send({ message: 'Contest not found' });
-
-        // console.log('Submission Req - Creator:', contest.creator.email, 'Requester:', email);
-        // Temporary disable check for debugging if requested, but better to keep
-        // if (contest.creator.email.toLowerCase() !== email) return res.status(403).send({ message: 'You can only view submissions for your own contests' });
-
+        if (!contest) return res.status(404).send({ message: 'Not found' });
         const result = await submissionCollection.find({ contestId }).toArray();
-        // console.log('Submissions found for', contestId, ':', result.length);
         return res.send(result);
     }
-
-    // Users cannot view submissions
-    return res.status(403).send({ message: 'You do not have permission to view submissions' });
+    return res.status(403).send({ message: 'Forbidden' });
 });
 
-// Winner declaration
 app.patch('/contests/winner/:id', verifyToken, async (req, res) => {
     const id = req.params.id;
-    const email = req.decoded.email;
+    const email = normalizeEmail(req.decoded.email);
     const user = await userCollection.findOne({ email });
     const { winner } = req.body;
 
-    // Admin can declare winner for any contest
     if (user.role === 'admin') {
-        const result = await contestCollection.updateOne(
-            { _id: new ObjectId(id) },
-            { $set: { winner } }
-        );
+        const result = await contestCollection.updateOne({ _id: new ObjectId(id) }, { $set: { winner } });
         return res.send(result);
     }
-
-    // Creator can only declare winner for their own contests
     if (user.role === 'creator') {
         const contest = await contestCollection.findOne({ _id: new ObjectId(id) });
-        if (!contest) return res.status(404).send({ message: 'Contest not found' });
-        if (contest.creator.email !== email) return res.status(403).send({ message: 'You can only declare winners for your own contests' });
-
-        const result = await contestCollection.updateOne(
-            { _id: new ObjectId(id) },
-            { $set: { winner } }
-        );
+        if (!contest) return res.status(404).send({ message: 'Not found' });
+        if (normalizeEmail(contest.creator.email) !== email) return res.status(403).send({ message: 'Forbidden' });
+        const result = await contestCollection.updateOne({ _id: new ObjectId(id) }, { $set: { winner } });
         return res.send(result);
     }
-
-    // Users cannot declare winners
-    return res.status(403).send({ message: 'You do not have permission to declare winners' });
+    return res.status(403).send({ message: 'Forbidden' });
 });
 
-app.get('/', (req, res) => res.send('ContestHub Server is Running'));
-
-// Start server if run directly
+// Server startup
 if (require.main === module) {
     app.listen(port, () => {
-        console.log(`Server is running on port: ${port}`);
+        console.log(`Server running on port ${port}`);
     });
 }
 
